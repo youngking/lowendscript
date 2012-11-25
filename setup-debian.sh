@@ -167,9 +167,9 @@ function install_php {
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 NAME="php-cgi"
 DESC="php-cgi"
-PIDFILE="/var/run/www/php.pid"
+PIDFILE="/var/lib/www/php.pid"
 FCGIPROGRAM="/usr/bin/php-cgi"
-FCGISOCKET="/var/run/www/php.sock"
+FCGISOCKET="/var/lib/www/php.sock"
 FCGIUSER="www-data"
 FCGIGROUP="www-data"
 
@@ -222,8 +222,8 @@ esac
 exit 0
 END
     chmod 755 /etc/init.d/php-cgi
-    mkdir -p /var/run/www
-    chown www-data:www-data /var/run/www
+    mkdir -p /var/lib/www
+    chown www-data:www-data /var/lib/www
 
     cat > /etc/nginx/fastcgi_php <<END
 location ~ \.php$ {
@@ -232,7 +232,7 @@ location ~ \.php$ {
     fastcgi_index index.php;
     fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
     if (-f \$request_filename) {
-        fastcgi_pass unix:/var/run/www/php.sock;
+        fastcgi_pass unix:/var/lib/www/php.sock;
     }
 }
 END
@@ -299,6 +299,7 @@ function install_wordpress {
 
     # Setting up the MySQL database
     dbname=`echo $1 | tr . _`
+	echo Database Name = 'echo $1 | tr . _'
     userid=`get_domain_name $1`
     # MySQL userid cannot be more than 15 characters long
     userid="${userid:0:15}"
@@ -322,6 +323,183 @@ server {
             rewrite ^(.*)$  /index.php last;
         }
     }
+}
+END
+    invoke-rc.d nginx reload
+}
+
+function install_htmlsite {
+    # Setup folder
+	mkdir /var/www/$1
+	
+	# Setup default index.html file
+	cat > "/var/www/$1/index.html" <<END
+Hello World
+END
+    
+    # Setting up Nginx mapping
+    cat > "/etc/nginx/sites-enabled/$1.conf" <<END
+server {
+    server_name $1;
+    root /var/www/$1;
+    include /etc/nginx/fastcgi_php;
+    location / {
+        index index.php index.html;
+        if (!-e \$request_filename) {
+            rewrite ^(.*)$  /index.php last;
+        }
+    }
+}
+END
+    service nginx restart
+}
+
+
+function install_drupal7 {
+    check_install wget
+    if [ -z "$1" ]
+    then
+        die "Usage: `basename $0` drupal <hostname>"
+    fi
+	
+	#Download PHP5-gd package
+	apt-get -q -y install php5-gd
+    /etc/init.d/php-cgi restart
+	
+    # Downloading the Drupal' latest and greatest distribution.
+    mkdir /tmp/drupal.$$
+    wget -O - http://ftp.drupal.org/files/projects/drupal-7.15.tar.gz | \
+        tar zxf - -C /tmp/drupal.$$/
+    mkdir /var/www/$1
+    cp -Rf /tmp/drupal.$$/drupal*/* "/var/www/$1"
+    rm -rf /tmp/drupal*
+    chown root:root -R "/var/www/$1"
+
+    # Setting up the MySQL database
+    dbname=`echo $1 | tr . _`
+	
+	# MySQL dbname cannot be more than 15 characters long
+    dbname="${dbname:0:15}"
+	
+    userid=`get_domain_name $1`
+	
+    # MySQL userid cannot be more than 15 characters long
+    userid="${userid:0:15}"
+    passwd=`get_password "$userid@mysql"`
+	
+	# Copy default.settings.php to settings.php and set write permissions.
+    cp "/var/www/$1/sites/default/default.settings.php" "/var/www/$1/sites/default/settings.php"
+	chmod 777 /var/www/$1/sites/default/settings.php
+	mkdir /var/www/$1/sites/default/files
+	chmod -R 777 /var/www/$1/sites/default/files
+    
+	# Create MySQL database
+	mysqladmin create "$dbname"
+    echo "GRANT ALL PRIVILEGES ON \`$dbname\`.* TO \`$userid\`@localhost IDENTIFIED BY '$passwd';" | \
+        mysql
+		
+    #Copy DB Name, User, and Pass to settings.php and set to read only.
+    echo "\$databases['default']['default'] = array(" >> /var/www/$1/sites/default/settings.php
+    echo "'driver' => 'mysql'," >> /var/www/$1/sites/default/settings.php
+    echo "'database' => '$dbname'," >> /var/www/$1/sites/default/settings.php
+    echo "'username' => '$userid'," >> /var/www/$1/sites/default/settings.php
+    echo "'password' => '$passwd'," >> /var/www/$1/sites/default/settings.php
+    echo "'host' => 'localhost');" >> /var/www/$1/sites/default/settings.php
+    chmod 644 /var/www/$1/sites/default/settings.php
+	
+	#Echo DB Name
+	echo -e $COL_BLUE"*** COPY FOR SAFE KEEPING ***"
+	COL_BLUE="\x1b[34;01m"
+    COL_RESET="\x1b[39;49;00m"
+    echo -e $COL_BLUE"Database Name: "$COL_RESET"$dbname"
+	
+    #Echo DB User value
+	echo -e $COL_BLUE"Database User: "$COL_RESET"${userid:0:15}"
+	
+	#Echo DB Password
+	echo -e $COL_BLUE"Database Password: "$COL_RESET"$passwd"
+	
+	#Echo Install URL
+	echo -e $COL_BLUE"Visit to finalize installation: "$COL_RESET"http://$1/install.php"
+	
+
+
+    # Setting up Nginx mapping
+    cat > "/etc/nginx/sites-enabled/$1.conf" <<END
+server {
+    server_name $1;
+    root /var/www/$1;
+    include /etc/nginx/fastcgi_php;
+    # common Drupal configuration options.
+# Make sure to set $socket to a fastcgi socket.
+
+        location = /favicon.ico {
+                log_not_found off;
+                access_log off;
+        }
+
+        ###
+        ### support for http://drupal.org/project/robotstxt module
+        ###
+        location = /robots.txt {
+                access_log off;
+                try_files \$uri @drupal;
+        }
+
+        # no access to php files in subfolders.
+        location ~ .+/.*\.php$ {
+                return 403;
+        }
+
+        location ~* \.(inc|engine|install|info|module|sh|sql|theme|tpl\.php|xtmpl|Entries|Repository|Root|jar|java|class)$ {
+                deny all;
+        }
+
+        location ~ \.php$ {
+                # Required for private files, otherwise they slow down extremely.
+                keepalive_requests 0;
+        }
+
+        # private files protection
+        location ~ ^/sites/.*/private/ {
+                access_log off;
+                deny all;
+        }
+
+        location ~* ^(?!/system/files).*\.(js|css|png|jpg|jpeg|gif|ico)$ {
+                # If the image does not exist, maybe it must be generated by drupal (imagecache)
+                try_files \$uri @drupal;
+                expires 7d;
+                log_not_found off;
+        }
+
+        ###
+        ### deny direct access to backups
+        ###
+        location ~* ^/sites/.*/files/backup_migrate/ {
+                access_log off;
+                deny all;
+        }
+
+        location ~ ^/(.*) {
+                try_files \$uri /index.php?q=\$1&\$args;
+        }
+
+        location @drupal {
+                # Some modules enforce no slash (/) at the end of the URL
+                # Else this rewrite block wouldn't be needed (GlobalRedirect)
+                rewrite ^/(.*)$ /index.php?q=\$1;
+        }
+#And here is the configuration for passing the request to PHP FastCGI (fastcgi.conf):
+
+# common fastcgi configuration for PHP files
+
+                fastcgi_split_path_info ^(.+\.php)(/.+)$;
+                #NOTE: You should have "cgi.fix_pathinfo = 0;" in php.ini
+                include fastcgi_params;
+                fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+                fastcgi_intercept_errors on;
+                fastcgi_read_timeout 6000;
 }
 END
     invoke-rc.d nginx reload
@@ -396,13 +574,19 @@ system)
     install_syslogd
     install_dropbear
     ;;
+htmlsite)
+    install_htmlsite $2
+	;;
+drupal7)
+    install_drupal7 $2
+	;;
 wordpress)
     install_wordpress $2
     ;;
 *)
     echo 'Usage:' `basename $0` '[option]'
     echo 'Available option:'
-    for option in system exim4 mysql nginx php wordpress
+    for option in system exim4 mysql nginx php wordpress drupal7 htmlsite
     do
         echo '  -' $option
     done
