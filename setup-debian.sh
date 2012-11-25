@@ -167,9 +167,9 @@ function install_php {
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 NAME="php-cgi"
 DESC="php-cgi"
-PIDFILE="/var/lib/www/php.pid"
+PIDFILE="/var/run/www/php.pid"
 FCGIPROGRAM="/usr/bin/php-cgi"
-FCGISOCKET="/var/lib/www/php.sock"
+FCGISOCKET="/var/run/www/php.sock"
 FCGIUSER="www-data"
 FCGIGROUP="www-data"
 
@@ -232,7 +232,7 @@ location ~ \.php$ {
     fastcgi_index index.php;
     fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
     if (-f \$request_filename) {
-        fastcgi_pass unix:/var/lib/www/php.sock;
+        fastcgi_pass unix:/var/run/www/php.sock;
     }
 }
 END
