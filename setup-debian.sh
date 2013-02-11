@@ -75,30 +75,17 @@ function install_dash {
     ln -s dash /bin/sh
 }
 
-function install_dropbear {
+function install_ssh {
     check_install dropbear dropbear
-    check_install /usr/sbin/xinetd xinetd
+    check_install sshd openssh-server
 
-    # Disable SSH
-    touch /etc/ssh/sshd_not_to_be_run
-    invoke-rc.d ssh stop
+    configure_sshroot
+    configure_sshport
 
-    # Enable dropbear to start. We are going to use xinetd as it is just
-    # easier to configure and might be used for other things.
-    cat > /etc/xinetd.d/dropbear <<END
-service ssh
-{
-    socket_type     = stream
-    only_from       = 0.0.0.0
-    wait            = no
-    user            = root
-    protocol        = tcp
-    server          = /usr/sbin/dropbear
-    server_args     = -i
-    disable         = no
-}
-END
-    invoke-rc.d xinetd restart
+    /etc/init.d/ssh restart
+    update-rc.d dropbear defaults
+    invoke-rc.d dropbear start
+
 }
 
 function install_exim4 {
@@ -280,6 +267,48 @@ END
 END
 
     invoke-rc.d inetutils-syslogd start
+}
+
+# Add Additional SSH Port
+function configure_sshport {
+    echo \>\> Configuring: Changing SSH Ports
+    # Take User Input
+    echo -n "Please enter an additional OPEN SSH Port: "
+    read -e SSHPORT
+    # Add Extra SSH Port To OpenSSH
+    sed -i 's/#Port/Port '$SSHPORT'/g' /etc/ssh/sshd_config
+    echo -n "Please enter an additional DROPBEAR SSH Port: "
+    read -e DSSHPORT
+    # Add Extra SSH Port To Dropbear
+    sed -i 's/DROPBEAR_EXTRA_ARGS="-w/DROPBEAR_EXTRA_ARGS="-w -p '$DSSHPORT'/g' /etc/default/dropbear
+}
+
+# Disable Root SSH Login
+function configure_sshroot {
+    echo \>\> Configuring: Disabling Root SSH Login
+    # Disable Root SSH Login For OpenSSH
+    sed -i 's/PermitRootLogin yes/PermitRootLogin no/g' /etc/ssh/sshd_config
+    # Disable Root SSH Login For Dropbear
+    sed -i 's/DROPBEAR_EXTRA_ARGS="/DROPBEAR_EXTRA_ARGS="-w/g' /etc/default/dropbear
+}
+
+# Set Time Zone
+function configure_timezone {
+    echo \>\> Configuring: Time Zone
+    # Configure Time Zone
+    dpkg-reconfigure tzdata
+}
+
+# Add User Account
+function configure_user {
+    echo \>\> Configuring: User Account
+    # Take User Input
+    echo -n "Please enter a user name: "
+    read -e USERNAME
+    # Add User Based On Input
+    useradd -m -s /bin/bash $USERNAME
+    # Set Password For Newly Added User
+    passwd $USERNAME
 }
 
 function install_wordpress {
@@ -572,7 +601,7 @@ system)
     update_upgrade
     install_dash
     install_syslogd
-    install_dropbear
+    install_ssh
     ;;
 htmlsite)
     install_htmlsite $2
